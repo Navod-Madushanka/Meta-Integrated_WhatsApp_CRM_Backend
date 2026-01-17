@@ -3,6 +3,8 @@
         "autoflush",
         "dotenv",
         "fernet",
+        "gensalt",
+        "hashpw",
         "ondelete",
         "sessionmaker",
         "waba"

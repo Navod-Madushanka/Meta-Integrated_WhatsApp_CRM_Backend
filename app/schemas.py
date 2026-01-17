@@ -1,26 +1,43 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
 from typing import Optional, List, Dict, Any, Literal
 from uuid import UUID
 from datetime import datetime
 
-# --- Business Schemas ---
+# --- 1. Template Component Validation ---
+# This ensures content_json strictly follows Meta's required structure
+class TemplateComponent(BaseModel):
+    type: Literal["HEADER", "BODY", "FOOTER", "BUTTONS"]
+    format: Optional[Literal["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]] = None
+    text: Optional[str] = None
+    buttons: Optional[List[Dict[str, Any]]] = None
+
+# --- 2. Business & Onboarding Schemas ---
 class BusinessBase(BaseModel):
     name: str
     owner_email: EmailStr
+
+class BusinessRegisterRequest(BaseModel):
+    """Initial signup schema used in register.py"""
+    business_name: str
+    owner_email: EmailStr
+    password: str
+
+class BusinessOnboardingUpdate(BaseModel):
+    """Used for Process 1: Automated Onboarding after Meta callback"""
+    meta_access_token: str
     waba_id: str
     phone_number_id: str
-    subscription_plan: Optional[str] = "Basic"
-
-class BusinessCreate(BusinessBase):
-    meta_access_token: str
 
 class BusinessOut(BusinessBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
-    messaging_tier: str
+    waba_id: Optional[str] = None
+    phone_number_id: Optional[str] = None
+    messaging_tier: str = "TIER_250"
+    subscription_plan: str = "Basic"
     created_at: datetime
 
-# --- User Schemas ---
+# --- 3. User Schemas ---
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
@@ -35,7 +52,7 @@ class UserOut(BaseModel):
     role: str
     created_at: datetime
 
-# --- Contact & Group Schemas ---
+# --- 4. Contact & Group Schemas ---
 class ContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
@@ -61,10 +78,13 @@ class ContactGroupOut(ContactGroupBase):
     business_id: UUID
     created_at: datetime
 
-# --- Template Schemas ---
+# --- 5. Template Schemas ---
 class TemplateBase(BaseModel):
     name: str
-    content_json: Dict[str, Any]
+    category: Literal["MARKETING", "UTILITY", "AUTHENTICATION"] = "MARKETING"
+    language: str = "en_US"
+    # Validates structure to prevent Meta rejection
+    components: List[TemplateComponent]
 
 class TemplateCreate(TemplateBase):
     business_id: UUID
@@ -77,44 +97,16 @@ class TemplateOut(TemplateBase):
     status: Literal["Pending", "Approved", "Rejected"] = "Pending"
     created_at: datetime
 
-# --- Campaign & Message Schemas ---
+# --- 6. Campaign & Message Schemas ---
 class CampaignCreate(BaseModel):
     business_id: UUID
-    name: Optional[str] = None
-    template_id: Optional[UUID] = None
+    name: str
+    template_id: UUID
+    # Required for Process 3: Selecting contacts via group
+    contact_group_id: Optional[UUID] = None 
     scheduled_at: Optional[datetime] = None
 
 class CampaignOut(CampaignCreate):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     total_contacts: int
-    created_at: datetime
-
-class MessageOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    business_id: UUID
-    contact_id: UUID
-    campaign_id: Optional[UUID] = None
-    meta_message_id: Optional[str] = None
-    direction: Literal["In", "Out"]
-    status: str = "Sent"
-    timestamp: datetime
-
-# --- Media & Webhook Schemas ---
-class MediaAssetOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    business_id: UUID
-    file_name: Optional[str] = None
-    media_url: Optional[str] = None
-    meta_media_id: Optional[str] = None
-    mime_type: Optional[str] = None
-    created_at: datetime
-
-class WebhookLogOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    business_id: Optional[UUID] = None
-    payload: Dict[str, Any]
-    received_at: datetime
