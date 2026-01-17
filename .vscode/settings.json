@@ -1,0 +1,13 @@
+{
+    "cSpell.words": [
+        "autoflush",
+        "dotenv",
+        "fernet",
+        "ondelete",
+        "sessionmaker",
+        "waba"
+    ],
+    "python.analysis.extraPaths": [
+        "./app/core"
+    ]
+}
