@@ -5,6 +5,7 @@
         "fernet",
         "gensalt",
         "hashpw",
+        "MATA",
         "ondelete",
         "sessionmaker",
         "waba"
