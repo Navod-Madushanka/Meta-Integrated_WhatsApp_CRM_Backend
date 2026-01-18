@@ -1,6 +1,6 @@
 import httpx
 import logging
-import os
+import uuid  # Added import
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -20,12 +20,10 @@ class RegisterSchema(BaseModel):
 
 @router.post("/register")
 async def register(data: RegisterSchema, db: Session = Depends(get_db)):
-    # Check if business already exists
     if db.query(User).filter(User.email == data.owner_email).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     
     try:
-        # PRODUCTION CHANGE: Encrypt the placeholder to keep data types consistent
         pending_token = encrypt_token("PENDING_ONBOARDING")
 
         new_biz = Business(
@@ -37,7 +35,7 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
             messaging_tier="TIER_250"
         )
         db.add(new_biz)
-        db.flush()  # To get the new business ID
+        db.flush()
 
         new_user = User(
             business_id = new_biz.id,
@@ -56,13 +54,17 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration failed")
     
 @router.post("/meta-callback/{business_id}")
-async def meta_onboarding_callback(business_id: str, code: str, db: Session = Depends(get_db)):
+async def meta_onboarding_callback(
+    business_id: uuid.UUID, # FIXED: Changed from str to uuid.UUID
+    code: str, 
+    db: Session = Depends(get_db)
+):
+    # business_id is now a UUID object, compatible with SQLAlchemy/Postgres UUID types
     biz = db.query(Business).filter(Business.id == business_id).first()
     if not biz:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business record not found")
     
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # 1. Exchange Code for Permanent Token
         token_url = f"https://graph.facebook.com/{settings.META_API_VERSION}/oauth/access_token"
         token_res = await client.get(token_url, params={
             "client_id": settings.META_APP_ID,
@@ -77,9 +79,6 @@ async def meta_onboarding_callback(business_id: str, code: str, db: Session = De
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         waba_id = token_data.get("whatsapp_business_account_id")
-
-        # 2. Automated Phone ID Recovery (Critical for Production)
-        # Meta doesn't always return phone_number_id in the token exchange.
         phone_id = token_data.get("phone_number_id")
 
         if not phone_id:
@@ -88,12 +87,10 @@ async def meta_onboarding_callback(business_id: str, code: str, db: Session = De
                 headers={"Authorization": f"Bearer {access_token}"}
             )
             if phone_res.status_code == 200:
-                # Pick the first verified number associated with the WABA
                 phones = phone_res.json().get("data", [])
                 if phones:
                     phone_id = phones[0].get("id")
             
-        # 3. Subscribe App to WABA Webhooks
         sub_url = f"https://graph.facebook.com/{settings.META_API_VERSION}/{waba_id}/subscribed_apps"
         sub_res = await client.post(
             sub_url,
@@ -104,11 +101,9 @@ async def meta_onboarding_callback(business_id: str, code: str, db: Session = De
             logger.error(f"Meta Subscription Error: {sub_res.text}")
             raise HTTPException(status_code=500, detail="Webhook link failed")
         
-        # 4. Secure Database Finalization
         try:
             biz.meta_access_token = encrypt_token(access_token)
             biz.waba_id = waba_id
-            # Ensure we don't null a non-nullable column
             biz.phone_number_id = phone_id if phone_id else "RECOVERY_FAILED"
             db.commit()
             return {"status": "SUCCESS", "waba_id": waba_id}

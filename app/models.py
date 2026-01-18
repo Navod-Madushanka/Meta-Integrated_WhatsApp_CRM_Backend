@@ -1,17 +1,42 @@
 import uuid
-from sqlalchemy import Column, String, Text, ForeignKey, TIMESTAMP, Integer, Table, CheckConstraint, UniqueConstraint, Index
+from sqlalchemy import Column, String, Text, ForeignKey, TIMESTAMP, Integer, Table, CheckConstraint, UniqueConstraint, Index, JSON, TypeDecorator
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 
+# --- SQLite Compatibility Type Decorator ---
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses PostgreSQL's UUID type, otherwise uses String(36).
+    """
+    impl = UUID(as_uuid=True)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'sqlite':
+            return dialect.type_descriptor(String(36))
+        else:
+            return dialect.type_descriptor(UUID(as_uuid=True))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == 'sqlite':
+            return str(value) # Converts UUID object to string for SQLite
+        return value
+
+# --- Multi-DB Compatibility Helpers ---
+CompatibleUUID = GUID()
+CompatibleJSON = JSONB().with_variant(JSON, "sqlite")
+CompatibleArray = ARRAY(Text).with_variant(Text, "sqlite")
+
 # --- Association Tables ---
-# Manages many-to-many relationship between Contacts and Groups
 contact_group_assignments = Table(
     "contact_group_assignments",
     Base.metadata,
-    Column("contact_id", UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True),
-    Column("group_id", UUID(as_uuid=True), ForeignKey("contact_groups.id", ondelete="CASCADE"), primary_key=True),
+    Column("contact_id", CompatibleUUID, ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", CompatibleUUID, ForeignKey("contact_groups.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # --- Core Models ---
@@ -19,7 +44,7 @@ contact_group_assignments = Table(
 class Business(Base):
     __tablename__ = "businesses"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     owner_email = Column(String(255), unique=True, nullable=False)
     meta_access_token = Column(Text, nullable=False) 
@@ -29,7 +54,6 @@ class Business(Base):
     subscription_plan = Column(String(50), server_default="Basic")
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
-    # Relationships with cascade deletes for clean multi-tenant management
     users = relationship("User", back_populates="business", cascade="all, delete-orphan")
     contacts = relationship("Contact", back_populates="business", cascade="all, delete-orphan")
     templates = relationship("Template", back_populates="business", cascade="all, delete-orphan")
@@ -38,8 +62,8 @@ class Business(Base):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
     role = Column(String(20), server_default="Agent") 
@@ -49,11 +73,11 @@ class User(Base):
 
 class Contact(Base):
     __tablename__ = "contacts"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     phone_number = Column(String(20), nullable=False)
     name = Column(String(255))
-    tags = Column(ARRAY(Text))
+    tags = Column(CompatibleArray) 
     status = Column(String(20), server_default="Active") 
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     
@@ -69,23 +93,22 @@ class Contact(Base):
 
 class ContactGroup(Base):
     __tablename__ = "contact_groups"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     group_name = Column(String(255), nullable=False)
     description = Column(Text)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     
     contacts = relationship("Contact", secondary=contact_group_assignments, back_populates="groups")
-
     __table_args__ = (UniqueConstraint('business_id', 'group_name'),)
 
 class Template(Base):
     __tablename__ = "templates"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     meta_template_id = Column(String(100)) 
     name = Column(String(255), nullable=False)
-    content_json = Column(JSONB, nullable=False) 
+    content_json = Column(CompatibleJSON, nullable=False) 
     status = Column(String(20), server_default="Pending") 
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -98,9 +121,9 @@ class Template(Base):
 
 class Campaign(Base):
     __tablename__ = "campaigns"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
-    template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id", ondelete="SET NULL"))
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    template_id = Column(CompatibleUUID, ForeignKey("templates.id", ondelete="SET NULL"))
     name = Column(String(255))
     total_contacts = Column(Integer, server_default="0")
     scheduled_at = Column(TIMESTAMP(timezone=True))
@@ -112,10 +135,10 @@ class Campaign(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
-    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
-    campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="SET NULL"))
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    contact_id = Column(CompatibleUUID, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
+    campaign_id = Column(CompatibleUUID, ForeignKey("campaigns.id", ondelete="SET NULL"))
     meta_message_id = Column(String(255), unique=True)
     direction = Column(String(10), nullable=False) 
     status = Column(String(20), server_default="Sent") 
@@ -127,21 +150,20 @@ class Message(Base):
 
     __table_args__ = (
         CheckConstraint("direction IN ('In', 'Out')"),
-        # Optimized composite index for real-time webhook status updates
         Index('idx_messages_tracking', 'business_id', 'meta_message_id'),
     )
 
 class WebhookLog(Base):
     __tablename__ = "webhook_logs"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"))
-    payload = Column(JSONB, nullable=False) 
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"))
+    payload = Column(CompatibleJSON, nullable=False) 
     received_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
 class MediaAsset(Base):
     __tablename__ = "media_assets"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     file_name = Column(String(255))
     media_url = Column(Text) 
     meta_media_id = Column(String(255)) 
