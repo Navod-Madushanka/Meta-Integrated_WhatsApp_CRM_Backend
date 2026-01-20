@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User, Business
-from app.core.config import settings # Use the imported instance
+from app.core.config import settings
 from app.core.security import encrypt_token, Hasher, create_access_token
 
 logger = logging.getLogger("uvicorn.error")
@@ -33,7 +33,7 @@ class MetaCallbackSchema(BaseModel):
 
 @router.post("/register")
 async def register(data: RegisterSchema, db: Session = Depends(get_db)):
-    """Registers a new business and an admin user."""
+    """Registers a new business and an admin user with placeholder Meta credentials."""
     if db.query(User).filter(User.email == data.owner_email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
@@ -41,7 +41,7 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
         )
     
     try:
-        # Initial placeholder setup
+        # Initial placeholder setup for Step 1
         pending_token = encrypt_token("PENDING_ONBOARDING")
 
         new_biz = Business(
@@ -76,7 +76,7 @@ async def register(data: RegisterSchema, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
-    """Authenticates a user and returns a JWT access token."""
+    """Authenticates a user and returns a JWT access token for the dashboard."""
     user = db.query(User).filter(User.email == form_data.username).first()
     
     if not user or not Hasher.verify_password(form_data.password, user.password_hash):
@@ -99,22 +99,19 @@ async def login(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestF
 @router.post("/meta-callback/{business_id}")
 async def meta_onboarding_callback(
     business_id: uuid.UUID, 
-    payload: MetaCallbackSchema, # Using a schema for cleaner POST body handling
+    payload: MetaCallbackSchema,
     db: Session = Depends(get_db)
 ):
     """
-    Step 7: Exchanges Meta code for a permanent access token, 
-    fetches Phone ID, and subscribes to webhooks.
+    Step 7 & 8: Exchanges Meta code, fetches Phone ID, and subscribes to webhooks.
+    Includes updated Step 8 verification for production reliability.
     """
     biz = db.query(Business).filter(Business.id == business_id).first()
     if not biz:
         raise HTTPException(status_code=404, detail="Business record not found")
     
-    
-    
     async with httpx.AsyncClient(timeout=20.0) as client:
-        # 1. Exchange Code for Access Token
-        # Note: META_APP_VERSION should be 'v21.0' in your .env
+        # 1. Exchange Code for Permanent Access Token
         token_url = f"https://graph.facebook.com/{settings.META_APP_VERSION}/oauth/access_token"
         
         token_res = await client.get(token_url, params={
@@ -129,38 +126,50 @@ async def meta_onboarding_callback(
         
         token_data = token_res.json()
         access_token = token_data.get("access_token")
-        
-        # In Embedded Signup, the WABA ID is often nested or returned directly
         waba_id = token_data.get("whatsapp_business_account_id")
 
-        # 2. Fetch Phone Number ID (If not in initial response)
-        phone_id = None
-        if waba_id:
-            phone_res = await client.get(
-                f"https://graph.facebook.com/{settings.META_APP_VERSION}/{waba_id}/phone_numbers",
-                headers={"Authorization": f"Bearer {access_token}"}
-            )
-            if phone_res.status_code == 200:
-                phones = phone_res.json().get("data", [])
-                if phones:
-                    # Select the first available phone number linked to this WABA
-                    phone_id = phones[0].get("id")
+        if not waba_id:
+            logger.error(f"WABA ID missing in Meta response for business {business_id}")
+            raise HTTPException(status_code=400, detail="WABA ID not found in Meta response")
 
-        # 3. Subscribe App to the WABA (Crucial for Webhooks)
+        # 2. Fetch Phone Number ID (Required for sending messages)
+        phone_id = None
+        phone_res = await client.get(
+            f"https://graph.facebook.com/{settings.META_APP_VERSION}/{waba_id}/phone_numbers",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        if phone_res.status_code == 200:
+            phones = phone_res.json().get("data", [])
+            if phones:
+                # Selecting the first available number linked to this WABA
+                phone_id = phones[0].get("id")
+        else:
+            logger.warning(f"Could not fetch phone numbers for WABA {waba_id}: {phone_res.text}")
+
+        # 3. Step 8: Subscribe App to the WABA (Crucial for Webhook Routing)
+        # This tells Meta to send incoming messages to our system's webhook URL.
         sub_url = f"https://graph.facebook.com/{settings.META_APP_VERSION}/{waba_id}/subscribed_apps"
-        await client.post(
+        sub_res = await client.post(
             sub_url,
             headers={"Authorization": f"Bearer {access_token}"}
         )
 
-        # 4. Secure Storage
+        # Update: Verify the subscription was successful before saving to DB
+        if sub_res.status_code != 200:
+            logger.error(f"Webhook Subscription Failed for WABA {waba_id}: {sub_res.text}")
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY, 
+                detail="Failed to initialize Meta Webhook subscription."
+            )
+
+        # 4. Secure Storage of Credentials
         try:
             biz.meta_access_token = encrypt_token(access_token)
             biz.waba_id = waba_id
             biz.phone_number_id = phone_id if phone_id else "PENDING_PHONE_ID"
             db.commit()
             
-            logger.info(f"Business {business_id} successfully connected Meta WABA {waba_id}")
+            logger.info(f"Business {business_id} initialized: WABA {waba_id}, Phone {phone_id}")
             return {
                 "status": "SUCCESS", 
                 "waba_id": waba_id, 
@@ -169,4 +178,4 @@ async def meta_onboarding_callback(
         except Exception as e:
             db.rollback()
             logger.error(f"Database Update Failed for {business_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to save Meta credentials")
+            raise HTTPException(status_code=500, detail="Failed to save Meta credentials to database")
