@@ -7,26 +7,19 @@ from app.database import Base
 
 # --- SQLite Compatibility Type Decorator ---
 class GUID(TypeDecorator):
-    """Platform-independent GUID type.
-    Uses PostgreSQL's UUID type, otherwise uses String(36).
-    """
     impl = UUID(as_uuid=True)
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == 'sqlite':
             return dialect.type_descriptor(String(36))
-        else:
-            return dialect.type_descriptor(UUID(as_uuid=True))
+        return dialect.type_descriptor(UUID(as_uuid=True))
 
     def process_bind_param(self, value, dialect):
-        if value is None:
-            return value
-        if dialect.name == 'sqlite':
-            return str(value) # Converts UUID object to string for SQLite
+        if value is None: return value
+        if dialect.name == 'sqlite': return str(value)
         return value
 
-# --- Multi-DB Compatibility Helpers ---
 CompatibleUUID = GUID()
 CompatibleJSON = JSONB().with_variant(JSON, "sqlite")
 CompatibleArray = ARRAY(Text).with_variant(Text, "sqlite")
@@ -39,8 +32,6 @@ contact_group_assignments = Table(
     Column("group_id", CompatibleUUID, ForeignKey("contact_groups.id", ondelete="CASCADE"), primary_key=True),
 )
 
-# --- Core Models ---
-
 class Business(Base):
     __tablename__ = "businesses"
 
@@ -50,7 +41,11 @@ class Business(Base):
     meta_access_token = Column(Text, nullable=False) 
     waba_id = Column(String(100), nullable=False)
     phone_number_id = Column(String(100), nullable=False)
+    
+    # Messaging Tier Management
     messaging_tier = Column(String(50), server_default="TIER_250")
+    daily_quota = Column(Integer, server_default="250") 
+    
     subscription_plan = Column(String(50), server_default="Basic")
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -68,7 +63,6 @@ class User(Base):
     password_hash = Column(Text, nullable=False)
     role = Column(String(20), server_default="Agent") 
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-
     business = relationship("Business", back_populates="users")
 
 class Contact(Base):
@@ -98,9 +92,7 @@ class ContactGroup(Base):
     group_name = Column(String(255), nullable=False)
     description = Column(Text)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-    
     contacts = relationship("Contact", secondary=contact_group_assignments, back_populates="groups")
-    __table_args__ = (UniqueConstraint('business_id', 'group_name'),)
 
 class Template(Base):
     __tablename__ = "templates"
@@ -110,23 +102,30 @@ class Template(Base):
     name = Column(String(255), nullable=False)
     content_json = Column(CompatibleJSON, nullable=False) 
     status = Column(String(20), server_default="Pending") 
+    language = Column(String(10), server_default="en_US")
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     business = relationship("Business", back_populates="templates")
     campaigns = relationship("Campaign", back_populates="template")
-
-    __table_args__ = (
-        CheckConstraint("status IN ('Pending', 'Approved', 'Rejected')"),
-    )
 
 class Campaign(Base):
     __tablename__ = "campaigns"
     id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
     business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
     template_id = Column(CompatibleUUID, ForeignKey("templates.id", ondelete="SET NULL"))
+    contact_group_id = Column(CompatibleUUID, ForeignKey("contact_groups.id", ondelete="SET NULL"))
     name = Column(String(255))
-    total_contacts = Column(Integer, server_default="0")
+    
+    # State Management for Quotas
+    status = Column(String(50), server_default="Draft") 
+    status_reason = Column(Text) 
+    
+    total_sent = Column(Integer, server_default="0")
+    total_failed = Column(Integer, server_default="0")
+    
     scheduled_at = Column(TIMESTAMP(timezone=True))
+    started_at = Column(TIMESTAMP(timezone=True))
+    completed_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     business = relationship("Business", back_populates="campaigns")
@@ -140,34 +139,10 @@ class Message(Base):
     contact_id = Column(CompatibleUUID, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
     campaign_id = Column(CompatibleUUID, ForeignKey("campaigns.id", ondelete="SET NULL"))
     meta_message_id = Column(String(255), unique=True)
-    direction = Column(String(10), nullable=False) 
+    direction = Column(String(10), nullable=False, default="Out") 
     status = Column(String(20), server_default="Sent") 
     timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     business = relationship("Business")
     contact = relationship("Contact", back_populates="messages")
     campaign = relationship("Campaign", back_populates="messages")
-
-    __table_args__ = (
-        CheckConstraint("direction IN ('In', 'Out')"),
-        Index('idx_messages_tracking', 'business_id', 'meta_message_id'),
-    )
-
-class WebhookLog(Base):
-    __tablename__ = "webhook_logs"
-    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
-    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"))
-    payload = Column(CompatibleJSON, nullable=False) 
-    received_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-
-class MediaAsset(Base):
-    __tablename__ = "media_assets"
-    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
-    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
-    file_name = Column(String(255))
-    media_url = Column(Text) 
-    meta_media_id = Column(String(255)) 
-    mime_type = Column(String(50))
-    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-
-    business = relationship("Business", back_populates="media_assets")

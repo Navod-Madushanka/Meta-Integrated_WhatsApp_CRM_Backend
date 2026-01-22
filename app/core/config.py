@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    @field_validator("DATABASE_URL", "ENCRYPTION_KEY", "SECRET_KEY", "META_APP_ID", "META_CLIENT_SECRET", "META_WEBHOOK_VERIFY_TOKEN")
+    @field_validator("DATABASE_URL", "ENCRYPTION_KEY", "SECRET_KEY", "META_APP_ID", "META_CLIENT_SECRET", "META_WEBHOOK_VERIFY_TOKEN", "REDIS_URL")
     @classmethod
     def not_empty(cls, v: str) -> str:
         if not v.strip():

@@ -5,6 +5,7 @@ from datetime import datetime
 
 # --- 1. Template Component Validation ---
 # This ensures content_json strictly follows Meta's required structure
+# [cite: 244]
 class TemplateComponent(BaseModel):
     type: Literal["HEADER", "BODY", "FOOTER", "BUTTONS"]
     format: Optional[Literal["TEXT", "IMAGE", "VIDEO", "DOCUMENT"]] = None
@@ -35,29 +36,28 @@ class BusinessOut(BusinessBase):
     phone_number_id: Optional[str] = None
     messaging_tier: str = "TIER_250"
     subscription_plan: str = "Basic"
-    created_at: datetime
 
 # --- 3. User Schemas ---
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
     email: EmailStr
+    role: str = "Agent"
+
+class UserCreate(UserBase):
     password: str
     business_id: UUID
-    role: Optional[Literal["Admin", "Manager", "Agent"]] = "Agent"
 
-class UserOut(BaseModel):
+class UserOut(UserBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     business_id: UUID
-    email: EmailStr
-    role: str
     created_at: datetime
 
-# --- 4. Contact & Group Schemas ---
+# --- 4. Contact Schemas ---
 class ContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
-    tags: Optional[List[str]] = []
-    status: Optional[Literal["Active", "Opt-out"]] = "Active"
+    tags: Optional[List[str]] = None
+    status: Literal["Active", "Opt-out"] = "Active"
 
 class ContactCreate(ContactBase):
     business_id: UUID
@@ -79,15 +79,17 @@ class ContactGroupOut(ContactGroupBase):
     created_at: datetime
 
 # --- 5. Template Schemas ---
+# This section implements the Template Builder API requirements
 class TemplateBase(BaseModel):
-    name: str
+    name: str # [cite: 156]
     category: Literal["MARKETING", "UTILITY", "AUTHENTICATION"] = "MARKETING"
     language: str = "en_US"
-    # Validates structure to prevent Meta rejection
+    # [cite_start]Validates structure to prevent Meta rejection [cite: 244]
     components: List[TemplateComponent]
 
 class TemplateCreate(TemplateBase):
-    business_id: UUID
+    """Used for the POST /templates/ endpoint"""
+    pass 
 
 class TemplateOut(TemplateBase):
     model_config = ConfigDict(from_attributes=True)
@@ -102,11 +104,24 @@ class CampaignCreate(BaseModel):
     business_id: UUID
     name: str
     template_id: UUID
-    # Required for Process 3: Selecting contacts via group
-    contact_group_id: Optional[UUID] = None 
+    contact_group_id: Optional[UUID] = None
     scheduled_at: Optional[datetime] = None
 
-class CampaignOut(CampaignCreate):
+class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
-    total_contacts: int
+    contact_id: UUID
+    direction: Literal["In", "Out"]
+    status: str
+    timestamp: datetime
+
+class CampaignOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    business_id: UUID
+    name: str
+    template_id: UUID
+    contact_group_id: Optional[UUID] = None
+    status: str
+    scheduled_at: Optional[datetime] = None
+    created_at: datetime

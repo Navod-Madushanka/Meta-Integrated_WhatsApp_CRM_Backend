@@ -4,18 +4,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Database and Models
 from app.database import engine, Base
-from app.models import Business, User, Contact, Template, Message, WebhookLog # Ensure models are loaded
+# Ensure all models are loaded so create_all() knows what tables to build
+from app.models import Business, User, Contact, Template, Message, WebhookLog 
 
 # Routes
-from app.routes import auth, webhooks
+# Added templates router for Phase 4
+from app.routes import auth, webhooks, templates, campaigns
 
 # 1. Setup Logging for production tracking
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
 
 # 2. Database Initialization
-# Note: In production, you will use Alembic for migrations.
-# This line creates tables automatically if they don't exist.
+# Automatically creates tables in PostgreSQL/SQLite based on models.py
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -24,8 +25,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 3. CORS Configuration (Essential for Production)
-# Replace "*" with your actual frontend domain in production (e.g., https://crm.yourdomain.com)
+# 3. CORS Configuration
+# Essential for allowing your React frontend to communicate with this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -41,10 +42,17 @@ app.include_router(auth.router)
 # Phase 2.5: Webhook Listener for Meta Events & Opt-outs
 app.include_router(webhooks.router)
 
+# Phase 4: Template & Campaign Management
+# This enables the POST /templates/ endpoint
+app.include_router(templates.router)
+
+app.include_router(campaigns.router)
+
 @app.get("/")
 def read_root():
     return {
         "status": "SaaS Engine Running",
         "docs": "/docs",
-        "health": "healthy"
+        "health": "healthy",
+        "active_modules": ["Auth", "Webhooks", "Templates"]
     }
