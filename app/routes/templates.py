@@ -1,8 +1,10 @@
+# app/routers/templates.py
 import httpx
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from . import models, schemas, deps
+from app import models, schemas
+from . import deps
 from app.core import security
 from app.core.config import settings
 

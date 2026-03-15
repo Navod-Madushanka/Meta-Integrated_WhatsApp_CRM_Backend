@@ -1,3 +1,4 @@
+# app/celery_app.py
 import logging
 from celery import Celery
 from celery.signals import after_setup_logger

@@ -1,8 +1,10 @@
+# app/core/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 class Settings(BaseSettings):
     DATABASE_URL: str
+    REDIS_URL: str
     ENCRYPTION_KEY: str
     SECRET_KEY: str
     ALGORITHM: str = "HS256"

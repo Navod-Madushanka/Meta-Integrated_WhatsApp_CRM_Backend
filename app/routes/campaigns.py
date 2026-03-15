@@ -1,3 +1,4 @@
+# app/routers/campaigns.py
 import logging
 from uuid import UUID
 from typing import List
@@ -8,7 +9,7 @@ from app.database import get_db
 from app.models import Campaign, User, Template, ContactGroup
 from app import schemas, models
 from app.routes.deps import get_current_user
-from app.workers.campaign_worker import send_bulk_campaign
+from app.service.campaign_worker import send_bulk_campaign
 
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/campaigns", tags=["Campaigns"])

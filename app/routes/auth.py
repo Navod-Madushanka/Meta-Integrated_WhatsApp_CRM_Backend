@@ -1,3 +1,4 @@
+# app/routers/auth.py
 import httpx
 import logging
 import uuid
@@ -9,7 +10,8 @@ from pydantic import BaseModel, EmailStr
 from app.database import get_db
 from app.models import User, Business
 from app.core.config import settings
-from app.core.security import encrypt_token, Hasher, create_access_token
+from app.core.security import encrypt_token, Hasher, create_access_token, get_current_user
+
 
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/auth", tags=["onboarding"])
@@ -179,3 +181,26 @@ async def meta_onboarding_callback(
             db.rollback()
             logger.error(f"Database Update Failed for {business_id}: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to save Meta credentials to database")
+
+@router.get("/me")
+async def get_current_user_business(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    biz = db.query(Business).filter(
+        Business.id == current_user.business_id
+    ).first()
+
+    if not biz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Business not found"
+        )
+
+    return {
+        "id": str(biz.id),
+        "name": biz.name,
+        "waba_id": biz.waba_id,
+        "phone_number_id": biz.phone_number_id,
+        "meta_access_token": "HIDDEN" if biz.meta_access_token else None
+    }

@@ -4,19 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Database and Models
 from app.database import engine, Base
-# Ensure all models are loaded so create_all() knows what tables to build
-from app.models import Business, User, Contact, Template, Message, WebhookLog 
+# IMPORTANT: Ensure your folder is named 'routers' or 'routes' consistently
+# from app.routers import auth, webhooks, templates, campaigns
+from app.routes import auth, webhooks, templates, campaigns 
 
-# Routes
-# Added templates router for Phase 4
-from app.routes import auth, webhooks, templates, campaigns
-
-# 1. Setup Logging for production tracking
+# 1. Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
 
 # 2. Database Initialization
-# Automatically creates tables in PostgreSQL/SQLite based on models.py
+# Creates tables defined in your PDF schema (businesses, users, templates, etc.)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -26,26 +23,23 @@ app = FastAPI(
 )
 
 # 3. CORS Configuration
-# Essential for allowing your React frontend to communicate with this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"], # Change to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 4. Include Routers
-# Phase 2: Auth and Onboarding Logic
+# Phase 1 & 2: Auth, Registration, and Meta Onboarding
 app.include_router(auth.router)
 
-# Phase 2.5: Webhook Listener for Meta Events & Opt-outs
+# Phase 2.5: Webhook Listener (Message statuses & Opt-outs)
 app.include_router(webhooks.router)
 
-# Phase 4: Template & Campaign Management
-# This enables the POST /templates/ endpoint
+# Phase 3 & 4: Template & Campaign Management
 app.include_router(templates.router)
-
 app.include_router(campaigns.router)
 
 @app.get("/")
@@ -54,5 +48,9 @@ def read_root():
         "status": "SaaS Engine Running",
         "docs": "/docs",
         "health": "healthy",
-        "active_modules": ["Auth", "Webhooks", "Templates"]
+        "active_modules": ["Auth", "Webhooks", "Templates", "Campaigns"]
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -146,3 +146,33 @@ class Message(Base):
     business = relationship("Business")
     contact = relationship("Contact", back_populates="messages")
     campaign = relationship("Campaign", back_populates="messages")
+
+class WebhookLog(Base):
+    """
+    Stores raw JSON data from Meta webhooks for audit and debugging.
+    Critical for 'Process 2' and 'Process 3' status syncing.
+    """
+    __tablename__ = "webhook_logs"
+
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    # can be 'message', 'template_update', 'phone_status_update'
+    event_type = Column(String(50))
+    payload = Column(CompatibleJSON, nullable=False)
+    processed = Column(Integer, server_default="0") # 0 = Pending, 1 = Success, -1 = Error
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+class MediaAsset(Base):
+    """
+    Tracks images/videos uploaded to Meta for use in templates.
+    Referenced by the Business relationship.
+    """
+    __tablename__ = "media_assets"
+
+    id = Column(CompatibleUUID, primary_key=True, default=uuid.uuid4)
+    business_id = Column(CompatibleUUID, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False)
+    meta_media_id = Column(String(255), nullable=False)
+    file_name = Column(String(255))
+    media_type = Column(String(50)) # IMAGE, VIDEO, DOCUMENT
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    business = relationship("Business", back_populates="media_assets")
